@@ -2,38 +2,53 @@ package com.udacity.project4.locationreminders.savereminder.selectreminderlocati
 
 
 import android.Manifest
-import android.app.Activity
-import android.content.Intent
-import android.content.IntentSender
+import android.annotation.SuppressLint
 import android.content.pm.PackageManager
-import android.content.res.Resources
 import android.os.Bundle
-import android.util.Log
 import android.view.*
 import androidx.core.content.ContextCompat
 import androidx.databinding.DataBindingUtil
-import com.google.android.gms.common.api.ApiException
-import com.google.android.gms.common.api.ResolvableApiException
+import androidx.navigation.fragment.findNavController
 import com.google.android.gms.location.*
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.*
-import com.google.android.material.snackbar.Snackbar
 import com.udacity.project4.R
 import com.udacity.project4.base.BaseFragment
-import com.udacity.project4.base.NavigationCommand
 import com.udacity.project4.databinding.FragmentSelectLocationBinding
 import com.udacity.project4.locationreminders.savereminder.SaveReminderViewModel
 import com.udacity.project4.utils.setDisplayHomeAsUpEnabled
 import org.koin.android.ext.android.inject
+import java.util.*
 
-class SelectLocationFragment : BaseFragment() {
+class SelectLocationFragment : BaseFragment(), OnMapReadyCallback {
+
+
+    companion object {
+        private const val TAG = "SaveReminderFragment"
+
+        private const val FINE_LOCATION_PERMISSION_REQUEST_CODE = 1
+        private const val TURN_DEVICE_LOCATION_ON_REQUEST_CODE = 29
+
+        private val DEFAULT_LAT_LNG = LatLng(35.566667942774295, 27.21726582312613)  // Broken dreams
+    }
+
+    enum class MapZoomLevel(val level: Float) {
+        World(1f),
+        Landmass(5f),
+        City(10f),
+        Streets(15f),
+        Buildings(20f)
+    }
 
     //Use Koin to get the view model of the SaveReminder
     override val _viewModel: SaveReminderViewModel by inject()
     private lateinit var binding: FragmentSelectLocationBinding
+
+    private lateinit var map: GoogleMap
+    private var marker: Marker? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -51,10 +66,16 @@ class SelectLocationFragment : BaseFragment() {
 //        TODO: zoom to the user location after taking his permission
 //        TODO: add style to the map
 //        TODO: put a marker to location that the user selected
+        val mapFragment = childFragmentManager.findFragmentById(R.id.map) as SupportMapFragment
+        mapFragment.getMapAsync(this)
+
+        binding.button.setOnClickListener {
+            onLocationSelected()
+        }
 
 
 //        TODO: call this function after the user confirms on the selected location
-        onLocationSelected()
+        // onLocationSelected()
 
         return binding.root
     }
@@ -63,6 +84,12 @@ class SelectLocationFragment : BaseFragment() {
         //        TODO: When the user confirms on the selected location,
         //         send back the selected location details to the view model
         //         and navigate back to the previous fragment to save the reminder and add the geofence
+        marker?.let {
+            _viewModel.reminderSelectedLocationStr.value = it.title
+            _viewModel.latitude.value = it.position.latitude
+            _viewModel.longitude.value = it.position.longitude
+        }
+        findNavController().popBackStack()
     }
 
 
@@ -71,21 +98,145 @@ class SelectLocationFragment : BaseFragment() {
     }
 
     override fun onOptionsItemSelected(item: MenuItem) = when (item.itemId) {
-        // TODO: Change the map type based on the user's selection.
         R.id.normal_map -> {
+            map.mapType = GoogleMap.MAP_TYPE_NORMAL
             true
         }
         R.id.hybrid_map -> {
+            map.mapType = GoogleMap.MAP_TYPE_HYBRID
             true
         }
         R.id.satellite_map -> {
+            map.mapType = GoogleMap.MAP_TYPE_SATELLITE
             true
         }
         R.id.terrain_map -> {
+            map.mapType = GoogleMap.MAP_TYPE_TERRAIN
             true
         }
         else -> super.onOptionsItemSelected(item)
     }
 
+    override fun onMapReady(googleMap: GoogleMap) {
+        map = googleMap
 
+        // map marker
+        map.setOnMapLongClickListener { latLng ->
+            addMapMarker(latLng)
+            marker!!.showInfoWindow()
+        }
+
+        // poi marker
+        map.setOnPoiClickListener { poi ->
+            addPoiMarker(poi)
+            marker!!.showInfoWindow()
+        }
+
+        // map style
+        map.setMapStyle(
+            MapStyleOptions.loadRawResourceStyle(
+                requireContext(),
+                R.raw.map_style
+            )
+        )
+
+        if (ContextCompat.checkSelfPermission(
+                requireContext(),
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+
+            enableMapMyLocation()
+
+        } else {
+
+            requestPermissions(
+                arrayOf<String>(Manifest.permission.ACCESS_FINE_LOCATION),
+                FINE_LOCATION_PERMISSION_REQUEST_CODE
+            )
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == FINE_LOCATION_PERMISSION_REQUEST_CODE) {
+            if (grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            ) {
+
+                enableMapMyLocation()
+
+            } else {
+                _viewModel.showSnackBarInt.value = R.string.permission_denied_explanation
+            }
+        }
+    }
+
+    private fun addPoiMarker(point: PointOfInterest) {
+        marker?.remove()
+        marker = map.addMarker(
+            MarkerOptions()
+                .position(point.latLng)
+                .title(point.name)
+                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE))
+        )
+    }
+
+    private fun addMapMarker(latLng: LatLng) {
+        // A Snippet is Additional text that's displayed below the title.
+        val snippet = String.format(
+            Locale.getDefault(),
+            "Lat: %1$.5f, Long: %2$.5f",
+            latLng.latitude,
+            latLng.longitude
+        )
+
+        marker?.remove()
+        marker = map.addMarker(
+            MarkerOptions()
+                .position(latLng)
+                .title(getString(R.string.dropped_pin))
+                .snippet(snippet)
+                .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED))
+        )
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun enableMapMyLocation() {
+        map.isMyLocationEnabled = true
+        addLastLocationCallback()
+    }
+
+
+    @SuppressLint("MissingPermission")
+    private fun addLastLocationCallback() {
+
+        val fusedLocationProviderClient =
+            LocationServices.getFusedLocationProviderClient(requireContext())
+        val lastLocationTask = fusedLocationProviderClient.lastLocation
+
+        // On completion, zoom to the user location and add marker
+        lastLocationTask.addOnCompleteListener(requireActivity()) { task ->
+
+            if (task.isSuccessful) {
+                val taskResult = task.result
+                taskResult?.run {
+
+                    val latLng = LatLng(latitude, longitude)
+                    map.moveCamera(
+                        CameraUpdateFactory.newLatLngZoom(
+                            latLng,
+                            MapZoomLevel.Streets.level
+                        )
+                    )
+
+                    addMapMarker(latLng)
+                }
+            }
+        }
+    }
 }
