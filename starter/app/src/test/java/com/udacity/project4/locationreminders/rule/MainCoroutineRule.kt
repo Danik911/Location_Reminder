@@ -7,12 +7,10 @@ import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 import kotlin.coroutines.CoroutineContext
 
-@OptIn(ExperimentalCoroutinesApi::class)
-class MainCoroutineRule(
-    private val dispatcher: TestDispatcher = StandardTestDispatcher()
-) : TestWatcher(), TestCoroutineScope by TestCoroutineScope(dispatcher) {
-
-
+@ExperimentalCoroutinesApi
+class MainCoroutineRule(val dispatcher: TestCoroutineDispatcher = TestCoroutineDispatcher()):
+    TestWatcher(),
+    TestCoroutineScope by TestCoroutineScope(dispatcher) {
     override fun starting(description: Description?) {
         super.starting(description)
         Dispatchers.setMain(dispatcher)
@@ -23,5 +21,4 @@ class MainCoroutineRule(
         cleanupTestCoroutines()
         Dispatchers.resetMain()
     }
-
 }
